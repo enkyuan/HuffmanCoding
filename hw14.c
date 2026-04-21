@@ -54,34 +54,6 @@ static void freeListAndTrees(ListNode *list)
    }
 }
 
-static void buildCodes(const TreeNode *ptr, char *path, int depth, char **codes)
-{
-   if (ptr == NULL) {
-      return;
-   }
-
-   if (isLeafNode(ptr)) {
-      if (depth == 0) {
-         path[0] = '0';
-         path[1] = '\0';
-      } else {
-         path[depth] = '\0';
-      }
-
-      codes[ptr->label] = (char *)malloc(strlen(path) + 1);
-      if (codes[ptr->label] != NULL) {
-         strcpy(codes[ptr->label], path);
-      }
-      return;
-   }
-
-   path[depth] = '0';
-   buildCodes(ptr->left, path, depth + 1, codes);
-
-   path[depth] = '1';
-   buildCodes(ptr->right, path, depth + 1, codes);
-}
-
 typedef struct {
    unsigned char currentByte;
    int bitsUsed;
@@ -140,6 +112,30 @@ static void flushBitWriter(FILE *fp, BitWriter *writer)
    }
 }
 
+static void printHuffmanLeaves(const TreeNode *ptr, FILE *fp, char *path, int depth)
+{
+   if (ptr == NULL) {
+      return;
+   }
+
+   if (isLeafNode(ptr)) {
+      if (depth == 0) {
+         path[0] = '0';
+         path[1] = '\0';
+      } else {
+         path[depth] = '\0';
+      }
+      fprintf(fp, "%c:%s\n", ptr->label, path);
+      return;
+   }
+
+   path[depth] = '0';
+   printHuffmanLeaves(ptr->left, fp, path, depth + 1);
+
+   path[depth] = '1';
+   printHuffmanLeaves(ptr->right, fp, path, depth + 1);
+}
+
 TreeNode *buildTreeNode(int label, TreeNode *left, TreeNode *right)
 {
    TreeNode *node = (TreeNode *)malloc(sizeof(TreeNode));
@@ -191,6 +187,16 @@ long treeNodeCount(TreeNode *node)
 
 int treeNodeCompare(TreeNode *tp1, TreeNode *tp2)
 {
+   if (tp1 == NULL && tp2 == NULL) {
+      return 0;
+   }
+   if (tp1 == NULL) {
+      return -1;
+   }
+   if (tp2 == NULL) {
+      return 1;
+   }
+
    if (tp1->count < tp2->count) {
       return -1;
    }
@@ -330,33 +336,8 @@ TreeNode *buildHuffmanTree(ListNode *list)
 
 void huffmanPrint(const TreeNode *ptr, FILE *fp)
 {
-   char *codes[ASCII_SIZE];
-   char buffer[ASCII_SIZE + 1];
-   int chars[ASCII_SIZE];
-   int count = 0;
-   int i;
-
-   for (i = 0; i < ASCII_SIZE; i++) {
-      codes[i] = NULL;
-   }
-
-   buildCodes(ptr, buffer, 0, codes);
-
-   for (i = 0; i < ASCII_SIZE; i++) {
-      if (codes[i] != NULL) {
-         chars[count++] = i;
-      }
-   }
-
-   sortCharsByCount(chars, count, (long [ASCII_SIZE]){0});
-
-   for (i = 0; i < count; i++) {
-      fprintf(fp, "%c:%s\n", chars[i], codes[chars[i]]);
-   }
-
-   for (i = 0; i < ASCII_SIZE; i++) {
-      free(codes[i]);
-   }
+   char path[ASCII_SIZE + 1];
+   printHuffmanLeaves(ptr, fp, path, 0);
 }
 
 static int writeSortedOutput(const char *filename, long *asciiCount)
@@ -387,42 +368,16 @@ static int writeSortedOutput(const char *filename, long *asciiCount)
    return 1;
 }
 
-static int writeHuffmanOutput(const char *filename, const TreeNode *root, long *asciiCount)
+static int writeHuffmanOutput(const char *filename, const TreeNode *root)
 {
    FILE *fp;
-   char *codes[ASCII_SIZE];
-   char buffer[ASCII_SIZE + 1];
-   int chars[ASCII_SIZE];
-   int count = 0;
-   int i;
 
    fp = fopen(filename, "w");
    if (fp == NULL) {
       return 0;
    }
 
-   for (i = 0; i < ASCII_SIZE; i++) {
-      codes[i] = NULL;
-   }
-
-   buildCodes(root, buffer, 0, codes);
-
-   for (i = 0; i < ASCII_SIZE; i++) {
-      if (codes[i] != NULL) {
-         chars[count++] = i;
-      }
-   }
-
-   sortCharsByCount(chars, count, asciiCount);
-
-   for (i = 0; i < count; i++) {
-      fprintf(fp, "%c:%s\n", chars[i], codes[chars[i]]);
-   }
-
-   for (i = 0; i < ASCII_SIZE; i++) {
-      free(codes[i]);
-   }
-
+   huffmanPrint(root, fp);
    fclose(fp);
    return 1;
 }
@@ -535,7 +490,7 @@ int main(int argc, char **argv)
       return EXIT_FAILURE;
    }
 
-   if (!writeHuffmanOutput(argv[3], root, asciiCount)) {
+   if (!writeHuffmanOutput(argv[3], root)) {
       fprintf(stderr, "cannot open output file.  Quit.\n");
       freeHuffmanTree(root);
       free(asciiCount);

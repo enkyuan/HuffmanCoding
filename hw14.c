@@ -7,135 +7,31 @@
 
 long *countLetters(FILE *fp)
 {
-   long *asciiCount = (long *)malloc(sizeof(long)*ASCII_SIZE);
+   long *asciiCount = (long *)malloc(sizeof(long) * ASCII_SIZE);
    if (asciiCount == NULL) {
       return NULL;
    }
+
    int ch;
    for (ch = 0; ch < ASCII_SIZE; ch++) {
       asciiCount[ch] = 0;
    }
+
    fseek(fp, 0, SEEK_SET);
    while ((ch = fgetc(fp)) != EOF) {
       asciiCount[ch] += 1;
    }
+
    return asciiCount;
 }
 
-static long creationCounter = 0;
-
-static int compareLeafAscii(const TreeNode *a, const TreeNode *b)
-{
-   if (a->label < b->label) {
-      return -1;
-   }
-   if (a->label > b->label) {
-      return 1;
-   }
-   return 0;
-}
-
-static int compareInternalCreation(const TreeNode *a, const TreeNode *b)
-{
-   if (a->label < b->label) {
-      return -1;
-   }
-   if (a->label > b->label) {
-      return 1;
-   }
-   return 0;
-}
-
-static void fillCodes(const TreeNode *ptr, char *buffer, int depth, char **codes)
-{
-   if (ptr == NULL) {
-      return;
-   }
-   if (isLeafNode(ptr)) {
-      if (depth == 0) {
-         buffer[0] = '0';
-         buffer[1] = '\0';
-      } else {
-         buffer[depth] = '\0';
-      }
-      codes[ptr->label] = (char *)malloc((strlen(buffer) + 1) * sizeof(char));
-      if (codes[ptr->label] != NULL) {
-         strcpy(codes[ptr->label], buffer);
-      }
-      return;
-   }
-   buffer[depth] = '0';
-   fillCodes(ptr->left, buffer, depth + 1, codes);
-   buffer[depth] = '1';
-   fillCodes(ptr->right, buffer, depth + 1, codes);
-}
-
-static void freeCodes(char **codes)
-{
-   int i;
-   for (i = 0; i < ASCII_SIZE; i++) {
-      free(codes[i]);
-   }
-}
-
-typedef struct {
-   unsigned char byte;
-   int bitsFilled;
-} BitWriter;
-
-static void bitWriterInit(BitWriter *writer)
-{
-   writer->byte = 0;
-   writer->bitsFilled = 0;
-}
-
-static void writeBit(FILE *fp, BitWriter *writer, int bit)
-{
-   writer->byte = (unsigned char)((writer->byte << 1) | (bit & 1));
-   writer->bitsFilled += 1;
-   if (writer->bitsFilled == 8) {
-      fputc(writer->byte, fp);
-      writer->byte = 0;
-      writer->bitsFilled = 0;
-   }
-}
-
-static void writeByte(FILE *fp, BitWriter *writer, unsigned char value)
-{
-   int i;
-   for (i = 7; i >= 0; i--) {
-      writeBit(fp, writer, (value >> i) & 1);
-   }
-}
-
-static void writeHeaderTree(const TreeNode *ptr, FILE *fp, BitWriter *writer)
-{
-   if (ptr == NULL) {
-      return;
-   }
-   if (isLeafNode(ptr)) {
-      writeBit(fp, writer, 1);
-      writeByte(fp, writer, (unsigned char)ptr->label);
-      return;
-   }
-   writeBit(fp, writer, 0);
-   writeHeaderTree(ptr->left, fp, writer);
-   writeHeaderTree(ptr->right, fp, writer);
-}
-
-static void flushBitWriter(FILE *fp, BitWriter *writer)
-{
-   if (writer->bitsFilled > 0) {
-      writer->byte = (unsigned char)(writer->byte << (8 - writer->bitsFilled));
-      fputc(writer->byte, fp);
-      writer->byte = 0;
-      writer->bitsFilled = 0;
-   }
-}
+static long internalCreationOrder = 0;
 
 static void sortCharsByCount(int *chars, int n, long *asciiCount)
 {
-   int i, j;
+   int i;
+   int j;
+
    for (i = 0; i < n - 1; i++) {
       for (j = i + 1; j < n; j++) {
          if (asciiCount[chars[j]] < asciiCount[chars[i]] ||
@@ -148,26 +44,121 @@ static void sortCharsByCount(int *chars, int n, long *asciiCount)
    }
 }
 
+static void freeListAndTrees(ListNode *list)
+{
+   while (list != NULL) {
+      ListNode *next = list->next;
+      freeHuffmanTree(list->ptr);
+      free(list);
+      list = next;
+   }
+}
+
+static void buildCodes(const TreeNode *ptr, char *path, int depth, char **codes)
+{
+   if (ptr == NULL) {
+      return;
+   }
+
+   if (isLeafNode(ptr)) {
+      if (depth == 0) {
+         path[0] = '0';
+         path[1] = '\0';
+      } else {
+         path[depth] = '\0';
+      }
+
+      codes[ptr->label] = (char *)malloc(strlen(path) + 1);
+      if (codes[ptr->label] != NULL) {
+         strcpy(codes[ptr->label], path);
+      }
+      return;
+   }
+
+   path[depth] = '0';
+   buildCodes(ptr->left, path, depth + 1, codes);
+
+   path[depth] = '1';
+   buildCodes(ptr->right, path, depth + 1, codes);
+}
+
+typedef struct {
+   unsigned char currentByte;
+   int bitsUsed;
+} BitWriter;
+
+static void initBitWriter(BitWriter *writer)
+{
+   writer->currentByte = 0;
+   writer->bitsUsed = 0;
+}
+
+static void writeOneBit(FILE *fp, BitWriter *writer, int bit)
+{
+   writer->currentByte = (unsigned char)((writer->currentByte << 1) | (bit & 1));
+   writer->bitsUsed += 1;
+
+   if (writer->bitsUsed == 8) {
+      fputc(writer->currentByte, fp);
+      writer->currentByte = 0;
+      writer->bitsUsed = 0;
+   }
+}
+
+static void writeEightBits(FILE *fp, BitWriter *writer, unsigned char value)
+{
+   int shift;
+   for (shift = 7; shift >= 0; shift--) {
+      writeOneBit(fp, writer, (value >> shift) & 1);
+   }
+}
+
+static void writeHeaderPreorder(const TreeNode *ptr, FILE *fp, BitWriter *writer)
+{
+   if (ptr == NULL) {
+      return;
+   }
+
+   if (isLeafNode(ptr)) {
+      writeOneBit(fp, writer, 1);
+      writeEightBits(fp, writer, (unsigned char)ptr->label);
+      return;
+   }
+
+   writeOneBit(fp, writer, 0);
+   writeHeaderPreorder(ptr->left, fp, writer);
+   writeHeaderPreorder(ptr->right, fp, writer);
+}
+
+static void flushBitWriter(FILE *fp, BitWriter *writer)
+{
+   if (writer->bitsUsed > 0) {
+      writer->currentByte = (unsigned char)(writer->currentByte << (8 - writer->bitsUsed));
+      fputc(writer->currentByte, fp);
+      writer->currentByte = 0;
+      writer->bitsUsed = 0;
+   }
+}
+
 TreeNode *buildTreeNode(int label, TreeNode *left, TreeNode *right)
 {
    TreeNode *node = (TreeNode *)malloc(sizeof(TreeNode));
    if (node == NULL) {
       return NULL;
    }
+
    node->label = label;
    node->left = left;
    node->right = right;
-   if (left == NULL && right == NULL) {
-      node->count = 0;
-   } else {
-      node->count = 0;
-      if (left != NULL) {
-         node->count += left->count;
-      }
-      if (right != NULL) {
-         node->count += right->count;
-      }
+   node->count = 0;
+
+   if (left != NULL) {
+      node->count += left->count;
    }
+   if (right != NULL) {
+      node->count += right->count;
+   }
+
    return node;
 }
 
@@ -176,26 +167,10 @@ void freeHuffmanTree(TreeNode *ptr)
    if (ptr == NULL) {
       return;
    }
+
    freeHuffmanTree(ptr->left);
    freeHuffmanTree(ptr->right);
    free(ptr);
-}
-
-void huffmanPrint(const TreeNode *ptr, FILE *fp)
-{
-   char *codes[ASCII_SIZE];
-   char buffer[ASCII_SIZE + 1];
-   int i;
-   for (i = 0; i < ASCII_SIZE; i++) {
-      codes[i] = NULL;
-   }
-   fillCodes(ptr, buffer, 0, codes);
-   for (i = 0; i < ASCII_SIZE; i++) {
-      if (codes[i] != NULL) {
-         fprintf(fp, "%c:%s\n", i, codes[i]);
-      }
-   }
-   freeCodes(codes);
 }
 
 int isLeafNode(const TreeNode *node)
@@ -203,7 +178,7 @@ int isLeafNode(const TreeNode *node)
    if (node == NULL) {
       return 0;
    }
-   return node->left == NULL && node->right == NULL;
+   return (node->left == NULL && node->right == NULL);
 }
 
 long treeNodeCount(TreeNode *node)
@@ -216,15 +191,6 @@ long treeNodeCount(TreeNode *node)
 
 int treeNodeCompare(TreeNode *tp1, TreeNode *tp2)
 {
-   if (tp1 == NULL && tp2 == NULL) {
-      return 0;
-   }
-   if (tp1 == NULL) {
-      return -1;
-   }
-   if (tp2 == NULL) {
-      return 1;
-   }
    if (tp1->count < tp2->count) {
       return -1;
    }
@@ -238,10 +204,24 @@ int treeNodeCompare(TreeNode *tp1, TreeNode *tp2)
    if (!isLeafNode(tp1) && isLeafNode(tp2)) {
       return 1;
    }
+
    if (isLeafNode(tp1) && isLeafNode(tp2)) {
-      return compareLeafAscii(tp1, tp2);
+      if (tp1->label < tp2->label) {
+         return -1;
+      }
+      if (tp1->label > tp2->label) {
+         return 1;
+      }
+      return 0;
    }
-   return compareInternalCreation(tp1, tp2);
+
+   if (tp1->label > tp2->label) {
+      return -1;
+   }
+   if (tp1->label < tp2->label) {
+      return 1;
+   }
+   return 0;
 }
 
 ListNode *addListNode(ListNode **list, TreeNode *new_object,
@@ -249,6 +229,7 @@ ListNode *addListNode(ListNode **list, TreeNode *new_object,
 {
    ListNode *newNode;
    ListNode *curr;
+
    if (list == NULL || new_object == NULL || cmpFunction == NULL) {
       return NULL;
    }
@@ -257,6 +238,7 @@ ListNode *addListNode(ListNode **list, TreeNode *new_object,
    if (newNode == NULL) {
       return NULL;
    }
+
    newNode->ptr = new_object;
    newNode->next = NULL;
 
@@ -270,6 +252,7 @@ ListNode *addListNode(ListNode **list, TreeNode *new_object,
    while (curr->next != NULL && cmpFunction(new_object, curr->next->ptr) >= 0) {
       curr = curr->next;
    }
+
    newNode->next = curr->next;
    curr->next = newNode;
    return newNode;
@@ -278,9 +261,11 @@ ListNode *addListNode(ListNode **list, TreeNode *new_object,
 ListNode *removeListNode(ListNode **list)
 {
    ListNode *removed;
+
    if (list == NULL || *list == NULL) {
       return NULL;
    }
+
    removed = *list;
    *list = (*list)->next;
    removed->next = NULL;
@@ -289,9 +274,8 @@ ListNode *removeListNode(ListNode **list)
 
 void freeList(ListNode *list)
 {
-   ListNode *next;
    while (list != NULL) {
-      next = list->next;
+      ListNode *next = list->next;
       free(list);
       list = next;
    }
@@ -309,18 +293,30 @@ void printList(const ListNode *list, FILE *fp)
 TreeNode *buildHuffmanTree(ListNode *list)
 {
    while (list != NULL && list->next != NULL) {
-      ListNode *first = removeListNode(&list);
-      ListNode *second = removeListNode(&list);
-      TreeNode *combined = buildTreeNode(-(int)(++creationCounter), first->ptr, second->ptr);
-      if (combined == NULL) {
-         free(first);
-         free(second);
-         freeList(list);
+      ListNode *firstNode = removeListNode(&list);
+      ListNode *secondNode = removeListNode(&list);
+      TreeNode *combined;
+
+      if (firstNode == NULL || secondNode == NULL) {
+         free(firstNode);
+         free(secondNode);
          return NULL;
       }
-      free(first);
-      free(second);
-      addListNode(&list, combined, treeNodeCompare);
+
+      combined = buildTreeNode(-(int)(++internalCreationOrder), firstNode->ptr, secondNode->ptr);
+      free(firstNode);
+      free(secondNode);
+
+      if (combined == NULL) {
+         freeListAndTrees(list);
+         return NULL;
+      }
+
+      if (addListNode(&list, combined, treeNodeCompare) == NULL) {
+         freeHuffmanTree(combined);
+         freeListAndTrees(list);
+         return NULL;
+      }
    }
 
    if (list == NULL) {
@@ -332,26 +328,58 @@ TreeNode *buildHuffmanTree(ListNode *list)
    return root;
 }
 
-static int writeSortedFile(const char *filename, long *asciiCount)
+void huffmanPrint(const TreeNode *ptr, FILE *fp)
 {
-   FILE *fp = fopen(filename, "w");
+   char *codes[ASCII_SIZE];
+   char buffer[ASCII_SIZE + 1];
    int chars[ASCII_SIZE];
-   int n = 0;
+   int count = 0;
    int i;
 
+   for (i = 0; i < ASCII_SIZE; i++) {
+      codes[i] = NULL;
+   }
+
+   buildCodes(ptr, buffer, 0, codes);
+
+   for (i = 0; i < ASCII_SIZE; i++) {
+      if (codes[i] != NULL) {
+         chars[count++] = i;
+      }
+   }
+
+   sortCharsByCount(chars, count, (long [ASCII_SIZE]){0});
+
+   for (i = 0; i < count; i++) {
+      fprintf(fp, "%c:%s\n", chars[i], codes[chars[i]]);
+   }
+
+   for (i = 0; i < ASCII_SIZE; i++) {
+      free(codes[i]);
+   }
+}
+
+static int writeSortedOutput(const char *filename, long *asciiCount)
+{
+   FILE *fp;
+   int chars[ASCII_SIZE];
+   int count = 0;
+   int i;
+
+   fp = fopen(filename, "w");
    if (fp == NULL) {
       return 0;
    }
 
    for (i = 0; i < ASCII_SIZE; i++) {
       if (asciiCount[i] > 0) {
-         chars[n++] = i;
+         chars[count++] = i;
       }
    }
 
-   sortCharsByCount(chars, n, asciiCount);
+   sortCharsByCount(chars, count, asciiCount);
 
-   for (i = 0; i < n; i++) {
+   for (i = 0; i < count; i++) {
       fprintf(fp, "%c:%ld\n", chars[i], asciiCount[chars[i]]);
    }
 
@@ -359,28 +387,59 @@ static int writeSortedFile(const char *filename, long *asciiCount)
    return 1;
 }
 
-static int writeHuffmanFile(const char *filename, const TreeNode *root)
+static int writeHuffmanOutput(const char *filename, const TreeNode *root, long *asciiCount)
 {
-   FILE *fp = fopen(filename, "w");
+   FILE *fp;
+   char *codes[ASCII_SIZE];
+   char buffer[ASCII_SIZE + 1];
+   int chars[ASCII_SIZE];
+   int count = 0;
+   int i;
+
+   fp = fopen(filename, "w");
    if (fp == NULL) {
       return 0;
    }
-   huffmanPrint(root, fp);
+
+   for (i = 0; i < ASCII_SIZE; i++) {
+      codes[i] = NULL;
+   }
+
+   buildCodes(root, buffer, 0, codes);
+
+   for (i = 0; i < ASCII_SIZE; i++) {
+      if (codes[i] != NULL) {
+         chars[count++] = i;
+      }
+   }
+
+   sortCharsByCount(chars, count, asciiCount);
+
+   for (i = 0; i < count; i++) {
+      fprintf(fp, "%c:%s\n", chars[i], codes[chars[i]]);
+   }
+
+   for (i = 0; i < ASCII_SIZE; i++) {
+      free(codes[i]);
+   }
+
    fclose(fp);
    return 1;
 }
 
-static int writeHeaderFile(const char *filename, const TreeNode *root)
+static int writeHeaderOutput(const char *filename, const TreeNode *root)
 {
-   FILE *fp = fopen(filename, "wb");
+   FILE *fp;
    BitWriter writer;
+
+   fp = fopen(filename, "wb");
    if (fp == NULL) {
       return 0;
    }
 
-   bitWriterInit(&writer);
-   writeHeaderTree(root, fp, &writer);
-   writeBit(fp, &writer, 0);
+   initBitWriter(&writer);
+   writeHeaderPreorder(root, fp, &writer);
+   writeOneBit(fp, &writer, 0);
    flushBitWriter(fp, &writer);
 
    fclose(fp);
@@ -395,9 +454,10 @@ static int writeHeaderFile(const char *filename, const TreeNode *root)
 int main(int argc, char **argv)
 {
    if (argc != 5) {
-    printf("Not enough arguments");
-    return EXIT_FAILURE;
+      printf("Not enough arguments");
+      return EXIT_FAILURE;
    }
+
    FILE * inFile = fopen(argv[1], "r");
    if (inFile == NULL) {
       fprintf(stderr, "can't open the input file.  Quit.\n");
@@ -424,34 +484,48 @@ int main(int argc, char **argv)
          TreeNode *leaf = buildTreeNode(i, NULL, NULL);
          if (leaf == NULL) {
             fprintf(stderr, "cannot allocate memory for huffman tree.  Quit.\n");
-            freeList(list);
+            freeListAndTrees(list);
             free(asciiCount);
             return EXIT_FAILURE;
          }
+
          leaf->count = asciiCount[i];
+
          if (addListNode(&list, leaf, treeNodeCompare) == NULL) {
             fprintf(stderr, "cannot allocate memory for linked list.  Quit.\n");
-            free(leaf);
-            while (list != NULL) {
-               ListNode *node = removeListNode(&list);
-               freeHuffmanTree(node->ptr);
-               free(node);
-            }
+            freeHuffmanTree(leaf);
+            freeListAndTrees(list);
             free(asciiCount);
             return EXIT_FAILURE;
          }
       }
    }
 
-   if (!writeSortedFile(argv[2], asciiCount)) {
+   if (!writeSortedOutput(argv[2], asciiCount)) {
       fprintf(stderr, "cannot open output file.  Quit.\n");
-      while (list != NULL) {
-         ListNode *node = removeListNode(&list);
-         freeHuffmanTree(node->ptr);
-         free(node);
-      }
+      freeListAndTrees(list);
       free(asciiCount);
       return EXIT_FAILURE;
+   }
+
+   if (list == NULL) {
+      FILE *fp2 = fopen(argv[3], "w");
+      FILE *fp3 = fopen(argv[4], "wb");
+      if (fp2 == NULL || fp3 == NULL) {
+         fprintf(stderr, "cannot open output file.  Quit.\n");
+         if (fp2 != NULL) {
+            fclose(fp2);
+         }
+         if (fp3 != NULL) {
+            fclose(fp3);
+         }
+         free(asciiCount);
+         return EXIT_FAILURE;
+      }
+      fclose(fp2);
+      fclose(fp3);
+      free(asciiCount);
+      return EXIT_SUCCESS;
    }
 
    root = buildHuffmanTree(list);
@@ -461,14 +535,14 @@ int main(int argc, char **argv)
       return EXIT_FAILURE;
    }
 
-   if (!writeHuffmanFile(argv[3], root)) {
+   if (!writeHuffmanOutput(argv[3], root, asciiCount)) {
       fprintf(stderr, "cannot open output file.  Quit.\n");
       freeHuffmanTree(root);
       free(asciiCount);
       return EXIT_FAILURE;
    }
 
-   if (!writeHeaderFile(argv[4], root)) {
+   if (!writeHeaderOutput(argv[4], root)) {
       fprintf(stderr, "cannot open output file.  Quit.\n");
       freeHuffmanTree(root);
       free(asciiCount);

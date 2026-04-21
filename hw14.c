@@ -133,26 +133,6 @@ static void flushBitWriter(FILE *fp, BitWriter *writer)
    }
 }
 
-static int cmpSortedOutput(const void *p1, const void *p2, void *ctx)
-{
-   const int *a = (const int *)p1;
-   const int *b = (const int *)p2;
-   const long *asciiCount = (const long *)ctx;
-   if (asciiCount[*a] < asciiCount[*b]) {
-      return -1;
-   }
-   if (asciiCount[*a] > asciiCount[*b]) {
-      return 1;
-   }
-   if (*a < *b) {
-      return -1;
-   }
-   if (*a > *b) {
-      return 1;
-   }
-   return 0;
-}
-
 static void sortCharsByCount(int *chars, int n, long *asciiCount)
 {
    int i, j;
